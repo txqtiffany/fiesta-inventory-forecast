@@ -37,13 +37,19 @@ sku_vendor AS (
   WHERE v.sku IS NOT NULL AND v.sku != ''
     AND p.vendor IS NOT NULL AND p.vendor != ''
 ),
-current_inventory AS (
+raw_inventory AS (
   SELECT
     inv.sku,
-    SUM(inv.available_qty) AS current_stock
+    SUM(inv.available_qty) AS raw_stock
   FROM `fiesta-inventory-forecast.fiesta_inventory.inventory_snapshots` AS inv
-  WHERE inv.snapshot_date = latest_snapshot_date   -- ✅ partition filter, unambiguous
+  WHERE inv.snapshot_date = latest_snapshot_date
   GROUP BY inv.sku
+),
+current_inventory AS (
+  SELECT
+    sku,
+    GREATEST(raw_stock, 0) AS current_stock
+  FROM raw_inventory
 ),
 demand_window AS (
   -- for weekly vendors, use lead_time + cadence(7) + buffer(3)
@@ -74,6 +80,8 @@ calc AS (
     sv.sku,
     sv.product_title,
     sv.variant_title,
+    COALESCE(r.raw_stock, 0) AS raw_stock,
+    (COALESCE(r.raw_stock, 0) < 0) AS negative_stock_flag,
     COALESCE(i.current_stock, 0) AS current_stock,
     COALESCE(fd.expected_demand, 0) AS expected_demand,
     vd.lead_time_days,
@@ -94,6 +102,7 @@ calc AS (
   JOIN cadence c USING (vendor_name)
   JOIN active_vendors av USING (vendor_name)
   JOIN vendor_defaults vd USING (vendor_name)
+  LEFT JOIN raw_inventory r USING (sku)
   LEFT JOIN current_inventory i USING (sku)
   LEFT JOIN forecast_demand fd
     ON fd.vendor_name = sv.vendor_name AND fd.sku = sv.sku
