@@ -15,7 +15,7 @@ sales_6m AS (
   SELECT
     sh.sku,
     SUM(sh.quantity_sold) AS units_sold_6m
-  FROM `fiesta-inventory-forecast.fiesta_inventory.sales_history` sh
+  FROM `fiesta-inventory-forecast.fiesta_inventory.sales_history_raw` sh
   WHERE sh.sale_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 6 MONTH)
     AND sh.sku IS NOT NULL AND sh.sku != ''
   GROUP BY sh.sku
@@ -75,7 +75,7 @@ new_with_ids AS (
     vendor_name,
     5 AS lead_time_days,
     6 AS moq,
-    1 AS pack_size
+    6 AS pack_size
   FROM new_vendors
 ),
 existing_clean AS (
@@ -84,7 +84,7 @@ existing_clean AS (
     vendor_name,
     COALESCE(lead_time_days, 5) AS lead_time_days,
     COALESCE(moq, 6) AS moq,
-    COALESCE(pack_size, 1) AS pack_size
+    COALESCE(pack_size, 6) AS pack_size
   FROM existing
 )
 SELECT * FROM existing_clean
