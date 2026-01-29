@@ -484,7 +484,10 @@ if __name__ == "__main__":
         for l in locations
     ]
 
-    with open("sync_data.json", "w", encoding="utf-8") as f:
+    out_path = os.getenv("SYNC_DATA_PATH", "sync_data.json")
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(
             {
                 "products": products,
@@ -498,5 +501,4 @@ if __name__ == "__main__":
             ensure_ascii=False,
         )
 
-    print("\n✅ Data saved to sync_data.json")
-    print("Next step: Run load_to_bigquery.py to upload to BigQuery")
+    print(f"\n✅ Data saved to {out_path}")

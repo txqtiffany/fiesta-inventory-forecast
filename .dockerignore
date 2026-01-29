@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtualenv / local env
+venv/
+.env
+.env.*
+*.local
+
+# Credentials / secrets (DO NOT ship keys)
+credentials/
+*.json
+
+# Local outputs
+sync_data.json
+*.log
+
+# Git + OS noise
+.git/
+.gitignore
+.DS_Store
