@@ -28,6 +28,6 @@ WHERE sale_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY);
 
 -- check current_inventory
 SELECT
-  COUNT(*) AS sku_count,
+  COUNT(*) AS variant_count,
   SUM(current_stock) AS total_stock
 FROM `fiesta-inventory-forecast.fiesta_inventory.current_inventory`;
