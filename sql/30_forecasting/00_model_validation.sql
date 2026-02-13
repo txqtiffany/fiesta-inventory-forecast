@@ -126,7 +126,7 @@ ELSE
     auto_arima=TRUE,
     data_frequency='AUTO_FREQUENCY'
   ) AS
-  SELECT week_start, variant_id, qty_sold
+  SELECT week_start, CAST(variant_id AS STRING) AS variant_id, qty_sold
   FROM `fiesta-inventory-forecast.fiesta_inventory.sales_weekly`
   WHERE week_start >= DATE_SUB(last_complete_week_start, INTERVAL 52 WEEK)
     AND week_start < cutoff_week_start
@@ -144,7 +144,7 @@ ELSE
   );
 
   -- ---------- 3) Metrics ----------
-  CREATE OR REPLACE TABLE `fiesta-inventory-forecast.fiesta_inventory.backtest_metrics_sku_4w` AS
+CREATE OR REPLACE TABLE `fiesta-inventory-forecast.fiesta_inventory.backtest_metrics_variant_4w` AS
   WITH actual AS (
     SELECT variant_id, week_start, qty_sold AS actual_qty
     FROM `fiesta-inventory-forecast.fiesta_inventory.sales_weekly`
@@ -211,7 +211,7 @@ ELSE
   CREATE OR REPLACE TABLE `fiesta-inventory-forecast.fiesta_inventory.model_quality_flags` AS
   WITH m AS (
     SELECT variant_id, wape, sum_actual
-    FROM `fiesta-inventory-forecast.fiesta_inventory.backtest_metrics_sku_4w`
+    FROM `fiesta-inventory-forecast.fiesta_inventory.backtest_metrics_variant_4w`
   ),
   b AS (
     SELECT variant_id, baseline_wape, sum_actual_holdout
