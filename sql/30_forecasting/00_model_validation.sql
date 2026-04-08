@@ -5,13 +5,14 @@
 --
 -- Outputs:
 --   - sales_daily
---   - sku_vendor_map
+--   - variant_vendor_map
 --   - sales_weekly
 --   - demand_arima_backtest_weekly (MODEL)
 --   - backtest_forecast_4w
---   - backtest_metrics_sku_4w
+--   - backtest_metrics_variant_4w
 --   - backtest_baseline_4w
---   - model_quality_flags   <-- used by restock SQL
+--   - backtest_proof_4w             <-- used by Looker "proof" time series
+--   - model_quality_flags           <-- used by restock SQL
 -- ============================================================
 
 -- ---------- Parameters ----------
@@ -23,7 +24,6 @@ DECLARE train_rows INT64;
 -- Monday-based weeks. Change to WEEK(SUNDAY) if desired.
 SET last_complete_week_start = DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 1 WEEK), WEEK(MONDAY));
 SET cutoff_week_start = DATE_SUB(last_complete_week_start, INTERVAL holdout_weeks WEEK);
-
 
 -- ---------- Active vendors ----------
 CREATE OR REPLACE TEMP TABLE active_vendors AS
@@ -90,17 +90,38 @@ SET train_rows = (
 
 IF train_rows = 0 THEN
 
+  -- Empty placeholders so downstream doesn't break
   CREATE OR REPLACE TABLE `fiesta-inventory-forecast.fiesta_inventory.backtest_forecast_4w` AS
   SELECT CAST(NULL AS STRING) AS variant_id, CAST(NULL AS DATE) AS week_start, CAST(NULL AS INT64) AS predicted_qty
   WHERE FALSE;
 
-  CREATE OR REPLACE TABLE `fiesta-inventory-forecast.fiesta_inventory.backtest_metrics_sku_4w` AS
-  SELECT CAST(NULL AS STRING) AS variant_id, CAST(NULL AS INT64) AS sum_actual, CAST(NULL AS INT64) AS sum_abs_error,
-         CAST(NULL AS FLOAT64) AS wape, CAST(NULL AS FLOAT64) AS mape, CURRENT_TIMESTAMP() AS created_at
+  CREATE OR REPLACE TABLE `fiesta-inventory-forecast.fiesta_inventory.backtest_metrics_variant_4w` AS
+  SELECT
+    CAST(NULL AS STRING) AS variant_id,
+    CAST(NULL AS INT64) AS sum_actual,
+    CAST(NULL AS INT64) AS sum_abs_error,
+    CAST(NULL AS FLOAT64) AS wape,
+    CAST(NULL AS FLOAT64) AS mape,
+    CURRENT_TIMESTAMP() AS created_at
   WHERE FALSE;
 
   CREATE OR REPLACE TABLE `fiesta-inventory-forecast.fiesta_inventory.backtest_baseline_4w` AS
-  SELECT CAST(NULL AS STRING) AS variant_id, CAST(NULL AS FLOAT64) AS baseline_wape, CAST(NULL AS INT64) AS sum_actual_holdout
+  SELECT
+    CAST(NULL AS STRING) AS variant_id,
+    CAST(NULL AS FLOAT64) AS baseline_wape,
+    CAST(NULL AS INT64) AS sum_actual_holdout
+  WHERE FALSE;
+
+  CREATE OR REPLACE TABLE `fiesta-inventory-forecast.fiesta_inventory.backtest_proof_4w` AS
+  SELECT
+    CAST(NULL AS STRING) AS variant_id,
+    CAST(NULL AS DATE) AS week_start,
+    CAST(NULL AS INT64) AS actual_qty,
+    CAST(NULL AS INT64) AS predicted_qty,
+    CAST(NULL AS INT64) AS baseline_qty,
+    CAST(NULL AS INT64) AS abs_error_pred,
+    CAST(NULL AS INT64) AS abs_error_base,
+    CURRENT_TIMESTAMP() AS created_at
   WHERE FALSE;
 
   CREATE OR REPLACE TABLE `fiesta-inventory-forecast.fiesta_inventory.model_quality_flags` AS
@@ -126,7 +147,10 @@ ELSE
     auto_arima=TRUE,
     data_frequency='AUTO_FREQUENCY'
   ) AS
-  SELECT week_start, CAST(variant_id AS STRING) AS variant_id, qty_sold
+  SELECT
+    week_start,
+    CAST(variant_id AS STRING) AS variant_id,
+    qty_sold
   FROM `fiesta-inventory-forecast.fiesta_inventory.sales_weekly`
   WHERE week_start >= DATE_SUB(last_complete_week_start, INTERVAL 52 WEEK)
     AND week_start < cutoff_week_start
@@ -144,9 +168,12 @@ ELSE
   );
 
   -- ---------- 3) Metrics ----------
-CREATE OR REPLACE TABLE `fiesta-inventory-forecast.fiesta_inventory.backtest_metrics_variant_4w` AS
+  CREATE OR REPLACE TABLE `fiesta-inventory-forecast.fiesta_inventory.backtest_metrics_variant_4w` AS
   WITH actual AS (
-    SELECT variant_id, week_start, qty_sold AS actual_qty
+    SELECT
+      CAST(variant_id AS STRING) AS variant_id,
+      week_start,
+      qty_sold AS actual_qty
     FROM `fiesta-inventory-forecast.fiesta_inventory.sales_weekly`
     WHERE week_start >= cutoff_week_start
       AND week_start <= last_complete_week_start
@@ -167,7 +194,12 @@ CREATE OR REPLACE TABLE `fiesta-inventory-forecast.fiesta_inventory.backtest_met
       variant_id,
       SUM(actual_qty) AS sum_actual,
       SUM(ABS(actual_qty - predicted_qty)) AS sum_abs_error,
-      AVG(CASE WHEN actual_qty = 0 THEN NULL ELSE ABS(actual_qty - predicted_qty) / actual_qty END) AS mape
+      AVG(
+        CASE
+          WHEN actual_qty = 0 THEN NULL
+          ELSE ABS(actual_qty - predicted_qty) / actual_qty
+        END
+      ) AS mape
     FROM joined
     GROUP BY variant_id
   )
@@ -183,7 +215,10 @@ CREATE OR REPLACE TABLE `fiesta-inventory-forecast.fiesta_inventory.backtest_met
   -- ---------- 4) Baseline (previous week) ----------
   CREATE OR REPLACE TABLE `fiesta-inventory-forecast.fiesta_inventory.backtest_baseline_4w` AS
   WITH w AS (
-    SELECT variant_id, week_start, qty_sold
+    SELECT
+      CAST(variant_id AS STRING) AS variant_id,
+      week_start,
+      qty_sold
     FROM `fiesta-inventory-forecast.fiesta_inventory.sales_weekly`
     WHERE week_start >= DATE_SUB(cutoff_week_start, INTERVAL 1 WEEK)
       AND week_start <= last_complete_week_start
@@ -207,7 +242,60 @@ CREATE OR REPLACE TABLE `fiesta-inventory-forecast.fiesta_inventory.backtest_met
   FROM pairs
   GROUP BY variant_id;
 
-  -- ---------- 5) Final quality flags (same table name you already use) ----------
+  -- ---------- 4b) Proof table: actual vs predicted vs baseline (weekly rows) ----------
+  CREATE OR REPLACE TABLE `fiesta-inventory-forecast.fiesta_inventory.backtest_proof_4w` AS
+  WITH actual AS (
+    SELECT
+      CAST(variant_id AS STRING) AS variant_id,
+      week_start,
+      qty_sold AS actual_qty
+    FROM `fiesta-inventory-forecast.fiesta_inventory.sales_weekly`
+    WHERE week_start >= cutoff_week_start
+      AND week_start <= last_complete_week_start
+  ),
+  pred AS (
+    SELECT
+      CAST(variant_id AS STRING) AS variant_id,
+      week_start,
+      predicted_qty
+    FROM `fiesta-inventory-forecast.fiesta_inventory.backtest_forecast_4w`
+  ),
+  baseline AS (
+    SELECT
+      a.variant_id,
+      a.week_start,
+      COALESCE(b.qty_sold, 0) AS baseline_qty
+    FROM actual a
+    LEFT JOIN `fiesta-inventory-forecast.fiesta_inventory.sales_weekly` b
+      ON b.variant_id = a.variant_id
+     AND b.week_start = DATE_SUB(a.week_start, INTERVAL 1 WEEK)
+  ),
+  joined AS (
+    SELECT
+      COALESCE(a.variant_id, p.variant_id) AS variant_id,
+      COALESCE(a.week_start, p.week_start) AS week_start,
+      COALESCE(a.actual_qty, 0) AS actual_qty,
+      COALESCE(p.predicted_qty, 0) AS predicted_qty
+    FROM actual a
+    FULL OUTER JOIN pred p
+      ON a.variant_id = p.variant_id
+     AND a.week_start = p.week_start
+  )
+  SELECT
+    j.variant_id,
+    j.week_start,
+    j.actual_qty,
+    j.predicted_qty,
+    COALESCE(bl.baseline_qty, 0) AS baseline_qty,
+    ABS(j.actual_qty - j.predicted_qty) AS abs_error_pred,
+    ABS(j.actual_qty - COALESCE(bl.baseline_qty, 0)) AS abs_error_base,
+    CURRENT_TIMESTAMP() AS created_at
+  FROM joined j
+  LEFT JOIN baseline bl
+    ON bl.variant_id = j.variant_id
+   AND bl.week_start = j.week_start;
+
+  -- ---------- 5) Final quality flags ----------
   CREATE OR REPLACE TABLE `fiesta-inventory-forecast.fiesta_inventory.model_quality_flags` AS
   WITH m AS (
     SELECT variant_id, wape, sum_actual
