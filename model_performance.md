@@ -2,13 +2,18 @@
 
 This project includes a **weekly self-validation (backtest)** step to show whether the demand forecast model is performing better than a simple baseline, and to prevent low-quality forecasts from driving restock recommendations.
 
-### What “Backtest” Means (Simple Explanation)
+📊 **[View Live Dashboard → Fiesta Carnival Inventory Dashboard](https://datastudio.google.com/reporting/9447bbad-9b32-413a-b7c2-a8b43c0da8ae)**
+
+---
+
+### What "Backtest" Means (Simple Explanation)
 
 Every week, I:
+
 1. **Train** a model on historical weekly sales **excluding the most recent 4 completed weeks**.
-2. **Predict (forecast)** those last **4 completed weeks** (the “holdout window”).
-3. Compare the model’s predictions to the **actual sales** during the holdout window.
-4. Compare model performance to a **baseline** forecast: “previous week’s sales for the same item.”
+2. **Predict (forecast)** those last **4 completed weeks** (the "holdout window").
+3. Compare the model's predictions to the **actual sales** during the holdout window.
+4. Compare model performance to a **baseline** forecast: "previous week's sales for the same item."
 
 This provides a repeatable, automated way to validate forecast quality.
 
@@ -23,23 +28,26 @@ WAPE is preferred over MAPE for retail data because it is more stable with low v
 ### Baseline Comparison
 
 I compute a simple baseline WAPE for each `variant_id`:
+
 - **Baseline forecast** = sales from the **previous week** for the same item
 
-I label items as “WORSE_THAN_BASELINE” when the model performs worse than this baseline on the holdout window.
+I label items as "WORSE_THAN_BASELINE" when the model performs worse than this baseline on the holdout window.
 
 ### Model Quality Flags (Used in Restock Gating)
 
 The backtest produces `model_quality_flags` with a `model_quality` label per `variant_id`:
+
 - `GOOD` — model meets the performance threshold (and/or beats baseline)
 - `WEAK` / `BAD` — model error is too large
 - `WORSE_THAN_BASELINE` — model is worse than the simple baseline
 - `NO_DATA` — not enough demand signal in the holdout window (common in long-tail retail)
 
-**Important note:** Many retail catalogs have long-tail items with sparse sales. A high “NO_DATA” rate often reflects low recent sales volume (not model failure). In the dashboard, I focus model-performance visuals on **scorable** items (e.g., holdout volume above a threshold).
+**Important note:** Many retail catalogs have long-tail items with sparse sales. A high "NO_DATA" rate often reflects low recent sales volume (not model failure). In the dashboard, I focus model-performance visuals on **scorable** items (e.g., holdout volume above a threshold).
 
 ### How Performance Affects the Restock Output
 
 The weekly restock table uses a **quality gate**:
+
 - If `model_quality = GOOD`, I use forecast demand (ML).
 - Otherwise, I use a robust fallback estimate:
   - **Fallback:** average daily units over the last 56 days × the restock horizon window.
@@ -49,21 +57,59 @@ This keeps restock recommendations stable and defensible even when the model has
 ### Tables Used for Model Proof
 
 The weekly model validation produces:
+
 - `backtest_forecast_4w`: predicted weekly quantities for the holdout window
 - `backtest_metrics_variant_4w`: WAPE/MAPE per item for the holdout window
 - `backtest_baseline_4w`: baseline WAPE per item
 - `model_quality_flags`: final quality label per item
 - `backtest_proof_4w`: weekly table with **actual vs predicted vs baseline** (used by the dashboard proof charts)
 
-### What Success Looks Like
+---
+
+## What Success Looks Like
 
 A successful iteration of this system shows:
+
 - Forecast accuracy improves as item sales volume increases (high-volume variants are most predictable).
 - For scorable items, a meaningful share of variants are `GOOD` and/or beat the baseline.
 - Restock outputs remain stable week-to-week and align with business constraints (lead times, pack sizes, MOQs).
 - Negative stock and mapping anomalies are surfaced clearly and do not silently corrupt reorder math.
 
-### Key Takeaways
+---
+
+## Dashboard Visualizations (Proof)
+
+> 📊 Live dashboard: [Fiesta Carnival Inventory Dashboard — Model Performance](https://datastudio.google.com/reporting/9447bbad-9b32-413a-b7c2-a8b43c0da8ae)
+>
+> The Model Performance page (last refreshed: Apr 27, 2026) shows the following KPIs and charts as of the most recent weekly run.
+
+### KPI Summary
+
+| Metric | Value |
+|---|---|
+| Products Evaluated | 39 |
+| % Good | 61.54% |
+| Median WAPE | 0.62 |
+| % Worse Than Baseline | 30.77% |
+
+### Chart 1 — Model Quality Distribution & Model vs Baseline Scatter
+
+![Model Quality Distribution and Model vs Baseline Scatter](docs/screenshots/model_performance_overview.png)
+
+- **Donut chart (left):** 61.5% of scorable variants are labeled `GOOD`, 30.8% are `WORSE_THAN_BASELINE`, and 7.7% are `WEAK`.
+- **Scatter plot (right):** Each point is a `variant_id`. Points cluster below WAPE = 1.0 for variants where baseline WAPE is also below 1.0, confirming the model is competitive on scorable items.
+
+### Chart 2 — Time Series: Actual vs Predicted vs Baseline (Holdout Weeks)
+
+![Time Series Actual vs Predicted vs Baseline](docs/screenshots/model_performance_timeseries.png)
+
+- The time series runs Feb 16 – Apr 27, 2026 across the 4-week holdout window.
+- `predicted_qty` (teal) tracks above `actual_qty` (blue) during the Mar–Apr peak, indicating the model over-forecasts demand during the seasonal spike — a known area for improvement.
+- `baseline_qty` (pink) stays flat and significantly below actual, confirming the ML model provides meaningful lift over naive baseline during high-demand periods.
+
+---
+
+## Key Takeaways
 
 - I use `variant_id` as the canonical key; SKUs are manually created and can collide across vendors/items.
 - Sparse retail catalogs require fallbacks; many items do not have enough weekly signal to score reliably.
@@ -86,7 +132,7 @@ Add a separate report for items that:
 to support pruning decisions and prevent unnecessary restocks.
 
 ### 3) Vendor & Item Archiving Workflow (Write-back)
-Looker Studio is read-only. To let stakeholders mark vendors/items as “Archived,” I can:
+Looker Studio is read-only. To let stakeholders mark vendors/items as "Archived," I can:
 - maintain `vendor_status` (and an optional `variant_status`) via a lightweight Google Sheet or form,
 - ingest those flags into BigQuery, and
 - filter archived vendors/items out of restock generation automatically.
